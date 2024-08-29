@@ -1,0 +1,106 @@
+```{r}
+
+library(ggplot2)
+library(mmpf)
+
+```
+
+```{r}
+
+#Set Data and Models
+test_model <- fit_sm
+test_data <- df_cv_mice_sm
+
+#exp(test_model$coef)
+#exp(confint.default(test_model))
+
+```
+
+```{r}
+
+p_hats <- predict(test_model, test_data[,-107], type='response')
+test_data$p_hats <- p_hats
+
+```
+
+```{r}
+
+#FOR LASSO
+p_hats <- predict(test_model,s=test_model$lambda.min,newx=model.matrix(fit_sm)[,-1],type="response")
+test_data$p_hats <- p_hats[,1]
+colnames(test_data)[length(test_data)] <- "p_hats"
+
+```
+
+```{r}
+
+#For random forest
+p_hats <- predict(fit_forest,test_data,type='prob')[,2]
+test_data$p_hats <- p_hats
+colnames(test_data)[length(test_data)] <- "p_hats"
+test_data$FIBR_PREDS <- as.numeric(as.character(test_data$FIBR_PREDS))
+
+```
+
+```{r}
+
+#Calibrate at Large
+mean(test_data$FIBR_PREDS)
+mean(test_data$p_hats)
+
+```
+
+```{r}
+
+#Calibration Plot
+dec <- quantile(test_data$p_hats,probs=seq(0,1,by=0.1),type=3)
+
+test_data$dec_grp <- cut(test_data$p_hats,breaks = dec,include.lowest = T,labels = 1:10)
+colnames(test_data)[length(test_data)] <- "dec_grp"
+
+agg <- aggregate(cbind(FIBR_PREDS,p_hats) ~ dec_grp,data = test_data,FUN = 'mean')
+
+
+mean(test_data$FIBR_PREDS[test_data$dec_grp == 5])
+mean(test_data$p_hats[test_data$dec_grp == 5])
+
+plot(agg$p_hats,agg$FIBR_PREDS,main = 'Calibration Plot',ylab = 'Observed Event Rate',xlab = 'Predicted Probabilities',pch = 19,col = 'orangered',cex = 2)
+
+abline(a=0,b=1)
+
+cal_fit <- lm(FIBR_PREDS ~ p_hats, data = agg)
+
+abline(cal_fit,lty = 2,col = 'royalblue',lwd = 3)
+
+summary(cal_fit)                        # Compute calibration intercept and slope
+confint(cal_fit)                        # Compute  95% confidence intervals
+
+```
+
+```{r}
+
+#Density
+ggplot(test_data,aes(p_hats,fill=as.factor(FIBR_PREDS))) + geom_density(alpha = 0.2) + scale_fill_manual(values=c("orangered", "royalblue")) + xlab("Predicted Probability") + ylab("Densitry") + labs(fill = "Event (AFib Occurrence)") + theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),axis.line = element_line(colour = "black"))
+
+```
+
+```{r}
+
+library(pROC)
+
+#ROC and AUC
+roc_mod <- roc(test_data$FIBR_PREDS,test_data$p_hats)
+plot.roc(roc_mod)             # Plot ROC curve
+auc(roc_mod)                  # Compute AUC
+ci.auc(roc_mod)
+threshold <- coords(roc_mod, x="best",input="threshold")[1,1]
+
+```
+
+```{r}
+
+library(caret)
+
+confusionMatrix(as.factor(test_data$FIBR_PREDS),as.factor(ifelse(test_data$p_hats > threshold,1,0)))
+
+```
